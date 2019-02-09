@@ -1,22 +1,32 @@
 public without sharing class HierarchyUtils {
 
-    private static Map<String, HierarchyUtils> utilsInstanceMap = new Map<String, HierarchyUtils>();
+    public class HierarchyUtilsException extends Exception {
+    }
 
-    public static HierarchyUtils getInstance(String sObjectName, String parentIdFieldName) {
+    private static Map<SObjectType, HierarchyUtils> utilsInstanceMap = new Map<SObjectType, HierarchyUtils>();
+
+    public static HierarchyUtils getInstance(SObjectType sObjType, SObjectField parentSObjectField) {
         HierarchyUtils result;
-        if (String.isNotBlank(sObjectName) && String.isNotBlank(parentIdFieldName)) {
-            if (utilsInstanceMap.containsKey(sObjectName)) {
-                result = utilsInstanceMap.get(sObjectName);
-            } else {
-                result = new HierarchyUtils(sObjectName, parentIdFieldName);
-                utilsInstanceMap.put(sObjectName, result);
+        if (sObjType != null && parentSObjectField != null) {
+            if (!sObjType.getDescribe().isAccessible()) {
+                throw new HierarchyUtilsException('Passed object is not accessible');
             }
+            if (!parentSObjectField.getDescribe().isAccessible()) {
+                throw new HierarchyUtilsException('Passed field is not accessible');
+            }
+            if (utilsInstanceMap.containsKey(sObjType)) {
+                result = utilsInstanceMap.get(sObjType);
+            } else {
+                result = new HierarchyUtils(sObjType, parentSObjectField);
+                utilsInstanceMap.put(sObjType, result);
+            }
+
         }
         return result;
     }
 
-    private String sObjectName;
-    private String parentIdFieldName;
+    private SObjectType sObjType;
+    private SObjectField parentSObjectField;
 
     private List<SObject> hierarchyItems {
         get {
@@ -42,20 +52,27 @@ public without sharing class HierarchyUtils {
     private HierarchyUtils() {
     }
 
-    private HierarchyUtils(String sObjectName, String parentIdFieldName) {
-        this.sObjectName = sObjectName;
-        this.parentIdFieldName = parentIdFieldName;
+    private HierarchyUtils(SObjectType sObjType, SObjectField parentSObjectField) {
+        this.sObjType = sObjType;
+        this.parentSObjectField = parentSObjectField;
     }
 
     private List<SObject> getHierarchyItems() {
-        String queryTemplate = 'SELECT {0} FROM {1} LIMIT 50000';
-        List<String> queryParameters = new List<String>{
-                String.join(new List<String>{
-                        'Id', parentIdFieldName
-                }, ','),
-                sObjectName
-        };
-        return Database.query(String.format(queryTemplate, queryParameters));
+        return Database.query(
+                String.format(
+                        'SELECT {0} FROM {1} LIMIT 50000',
+                        new List<String>{
+                                String.join(
+                                        new List<String>{
+                                                'Id',
+                                                parentSObjectField.getDescribe().getName()
+                                        },
+                                        ','
+                                ),
+                                sObjType.getDescribe().getName()
+                        }
+                )
+        );
     }
 
     private Map<Id, Id> getRecordIdParentId() {
@@ -67,7 +84,7 @@ public without sharing class HierarchyUtils {
         for (SObject hierarchyItem : hierarchyItems) {
 
             recordId = (Id) hierarchyItem.get('Id');
-            parentId = (Id) hierarchyItem.get(parentIdFieldName);
+            parentId = (Id) hierarchyItem.get(parentSObjectField.getDescribe().getName());
 
             if (parentId != null) {
                 result.put(recordId, parentId);
@@ -85,8 +102,9 @@ public without sharing class HierarchyUtils {
         Set<Id> childIds;
 
         for (SObject hierarchyItem : hierarchyItems) {
+
             recordId = (Id) hierarchyItem.get('Id');
-            parentId = (Id) hierarchyItem.get(parentIdFieldName);
+            parentId = (Id) hierarchyItem.get(parentSObjectField.getDescribe().getName());
 
             if (!result.containsKey(recordId)) {
                 result.put(recordId, new Set<Id>());
